@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import json
 from datetime import datetime
+from fractions import Fraction
 
 # Try to import pillow_heif for HEIC support
 try:
@@ -208,6 +209,180 @@ def extract_all_metadata(photo_path):
     except Exception as e:
         print(f"Error during metadata debugging: {str(e)}")
         return []
+
+def convert_gps_to_decimal(gps_coords, gps_ref):
+    """
+    Convert GPS coordinates from degrees/minutes/seconds to decimal degrees.
+    
+    Args:
+        gps_coords: GPS coordinates in [degrees, minutes, seconds] format
+        gps_ref: Reference direction (N/S/E/W)
+        
+    Returns:
+        float: GPS coordinates in decimal degrees
+    """
+    try:
+        degrees = float(gps_coords[0])
+        minutes = float(gps_coords[1])
+        seconds = float(gps_coords[2])
+        
+        decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+        
+        # If reference is South or West, negate the coordinate
+        if gps_ref in ['S', 'W']:
+            decimal = -decimal
+            
+        return decimal
+    except Exception as e:
+        print(f"Error converting GPS coordinates: {str(e)}")
+        return None
+
+def extract_gps_data(tags, exiftool_metadata=None):
+    """
+    Extract GPS data from EXIF tags or ExifTool metadata.
+    
+    Args:
+        tags: EXIF tags from exifread
+        exiftool_metadata: Metadata from ExifTool for HEIC files
+        
+    Returns:
+        tuple: (latitude, longitude) in decimal degrees or (None, None) if not available
+    """
+    latitude, longitude = None, None
+    
+    # First try ExifTool metadata if available (more reliable for HEIC)
+    if exiftool_metadata:
+        if 'EXIF:GPSLatitude' in exiftool_metadata and 'EXIF:GPSLongitude' in exiftool_metadata:
+            try:
+                lat = exiftool_metadata.get('EXIF:GPSLatitude')
+                lat_ref = exiftool_metadata.get('EXIF:GPSLatitudeRef', 'N')
+                
+                lon = exiftool_metadata.get('EXIF:GPSLongitude')
+                lon_ref = exiftool_metadata.get('EXIF:GPSLongitudeRef', 'E')
+                
+                # Check if the coordinates are already in decimal format
+                if isinstance(lat, float) and isinstance(lon, float):
+                    latitude = lat if lat_ref == 'N' else -lat
+                    longitude = lon if lon_ref == 'E' else -lon
+                else:
+                    # Parse the ExifTool coordinate format
+                    # ExifTool might return coordinates in a different format
+                    print(f"GPS coordinates format: {type(lat)}, {lat}, {lon}")
+                    
+                    # Handle string format like "51 deg 30' 15.4\" N"
+                    if isinstance(lat, str) and isinstance(lon, str):
+                        # Parse latitude string
+                        lat_parts = lat.replace('deg', '').replace("'", '').replace('"', '').split()
+                        lat_deg = float(lat_parts[0])
+                        lat_min = float(lat_parts[1]) if len(lat_parts) > 1 else 0
+                        lat_sec = float(lat_parts[2]) if len(lat_parts) > 2 else 0
+                        
+                        # Parse longitude string
+                        lon_parts = lon.replace('deg', '').replace("'", '').replace('"', '').split()
+                        lon_deg = float(lon_parts[0])
+                        lon_min = float(lon_parts[1]) if len(lon_parts) > 1 else 0
+                        lon_sec = float(lon_parts[2]) if len(lon_parts) > 2 else 0
+                        
+                        # Convert to decimal
+                        latitude = lat_deg + (lat_min / 60.0) + (lat_sec / 3600.0)
+                        if lat_ref == 'S':
+                            latitude = -latitude
+                            
+                        longitude = lon_deg + (lon_min / 60.0) + (lon_sec / 3600.0)
+                        if lon_ref == 'W':
+                            longitude = -longitude
+            except Exception as e:
+                print(f"Error extracting GPS from ExifTool: {str(e)}")
+    
+    # If not found in ExifTool data, try exifread tags
+    if (latitude is None or longitude is None) and tags:
+        try:
+            # Check if GPS data exists
+            if 'GPS GPSLatitude' in tags and 'GPS GPSLongitude' in tags:
+                # Get latitude information
+                lat = tags['GPS GPSLatitude'].values
+                lat_ref = tags.get('GPS GPSLatitudeRef', 'N').values
+                
+                # Get longitude information
+                lon = tags['GPS GPSLongitude'].values
+                lon_ref = tags.get('GPS GPSLongitudeRef', 'E').values
+                
+                # Convert to decimal degrees
+                latitude = convert_gps_to_decimal(lat, lat_ref)
+                longitude = convert_gps_to_decimal(lon, lon_ref)
+        except Exception as e:
+            print(f"Error extracting GPS from EXIF: {str(e)}")
+    
+    # If still not found but on macOS, try mdls command
+    if (latitude is None or longitude is None) and os.path.exists('/usr/bin/mdls'):
+        try:
+            # This is a placeholder - in a real implementation, you would need to
+            # parse the actual GPS coordinates from mdls output if available
+            pass
+        except Exception as e:
+            print(f"Error extracting GPS from mdls: {str(e)}")
+    
+    return latitude, longitude
+
+def extract_orientation_data(tags, exiftool_metadata=None):
+    """
+    Extract compass orientation data from EXIF tags or ExifTool metadata.
+    
+    Args:
+        tags: EXIF tags from exifread
+        exiftool_metadata: Metadata from ExifTool for HEIC files
+        
+    Returns:
+        float: Direction in degrees (0-360) or None if not available
+    """
+    orientation = None
+    
+    # First try ExifTool metadata if available
+    if exiftool_metadata:
+        # Check various fields that might contain orientation
+        orientation_fields = [
+            'EXIF:GPSImgDirection',
+            'XMP:GPSImgDirection',
+            'GPS:GPSImgDirection',
+            'GPS:ImgDirection',
+            'EXIF:GPSDestBearing',
+            'XMP:GPSDestBearing'
+        ]
+        
+        for field in orientation_fields:
+            if field in exiftool_metadata and exiftool_metadata[field] is not None:
+                try:
+                    orientation = float(exiftool_metadata[field])
+                    print(f"Found orientation in ExifTool {field}: {orientation}")
+                    break
+                except (ValueError, TypeError):
+                    continue
+    
+    # If not found in ExifTool data, try exifread tags
+    if orientation is None and tags:
+        orientation_tags = [
+            'GPS GPSImgDirection',
+            'GPS GPSDestBearing'
+        ]
+        
+        for tag in orientation_tags:
+            if tag in tags:
+                try:
+                    # Get the value (could be a fraction)
+                    value = tags[tag].values[0]
+                    
+                    # Convert to float
+                    if isinstance(value, Fraction):
+                        orientation = float(value)
+                    else:
+                        orientation = float(value)
+                        
+                    print(f"Found orientation in EXIF {tag}: {orientation}")
+                    break
+                except (ValueError, TypeError, IndexError):
+                    continue
+    
+    return orientation
 
 def extract_metadata_from_photo(photo_path):
     """
@@ -459,6 +634,41 @@ def extract_metadata_from_photo(photo_path):
             clean_name = clean_name.replace('_', ' ')
             photo_data['caption'] = clean_name
             print(f"Using filename-based caption: {photo_data['caption']}")
+    
+    # Extract GPS data
+    latitude = None
+    longitude = None
+    
+    # Get ExifTool metadata if it's a HEIC file
+    exiftool_metadata = None
+    if photo_path.lower().endswith('.heic'):
+        exiftool_metadata = get_heic_metadata_with_exiftool(photo_path)
+    
+    # Extract GPS data
+    tags = None
+    if not photo_path.lower().endswith('.heic'):
+        try:
+            with open(photo_path, 'rb') as f:
+                tags = exifread.process_file(f, details=False)
+        except Exception as e:
+            print(f"Error reading EXIF data: {str(e)}")
+    
+    # Get GPS coordinates
+    latitude, longitude = extract_gps_data(tags, exiftool_metadata)
+    
+    # Store GPS data in photo_data if available
+    if latitude is not None and longitude is not None:
+        photo_data['latitude'] = latitude
+        photo_data['longitude'] = longitude
+        print(f"Found GPS coordinates: {latitude}, {longitude}")
+    
+    # Extract orientation data
+    orientation = extract_orientation_data(tags, exiftool_metadata)
+    
+    # Store orientation in photo_data if available
+    if orientation is not None:
+        photo_data['orientation'] = orientation
+        print(f"Found orientation: {orientation}")
     
     return photo_data
 

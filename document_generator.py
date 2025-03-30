@@ -6,8 +6,9 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from photo_processor import cleanup_temp_files
+from map_generator import generate_map, generate_compass_indicator, cleanup_temp_files as cleanup_map_files
 
-def create_document(photo_data_list, output_path, images_per_page=2):
+def create_document(photo_data_list, output_path, images_per_page=2, include_location=True):
     """
     Create a Word document with photos and their captions.
     
@@ -15,6 +16,7 @@ def create_document(photo_data_list, output_path, images_per_page=2):
         photo_data_list (list): List of dictionaries containing photo data
         output_path (str): Path to save the output document
         images_per_page (int): Number of images per page (default: 2)
+        include_location (bool): Whether to include location data (default: True)
     
     Returns:
         bool: True if successful, False otherwise
@@ -54,6 +56,13 @@ def create_document(photo_data_list, output_path, images_per_page=2):
         else:  # 4 images per page
             img_width = page_width / 2
         
+        # Calculate smaller sizes for maps and compass indicators
+        map_width = Inches(1.5)
+        compass_width = Inches(1)
+        
+        # Keep track of temporary map and compass files for cleanup
+        temp_files_to_cleanup = []
+        
         # Add photos and captions to the document
         for i, photo_data in enumerate(photo_data_list):
             # Add page break if needed (except for the first image)
@@ -72,6 +81,84 @@ def create_document(photo_data_list, output_path, images_per_page=2):
                 caption_text.font.size = Pt(10)
                 caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 
+                # If location data is available and should be included
+                if include_location:
+                    # Check if GPS data is available
+                    has_gps = 'latitude' in photo_data and 'longitude' in photo_data
+                    has_orientation = 'orientation' in photo_data
+                    
+                    if has_gps or has_orientation:
+                        # Add a horizontal line
+                        doc.add_paragraph("_" * 50)
+                        
+                        # Create a table for location data (1 row, 2 columns)
+                        location_table = doc.add_table(rows=1, cols=2)
+                        
+                        # Set table width
+                        location_table.autofit = False
+                        location_table.width = page_width
+                        
+                        # Add map if GPS coordinates are available
+                        if has_gps:
+                            latitude = photo_data['latitude']
+                            longitude = photo_data['longitude']
+                            
+                            # Generate map
+                            map_path = generate_map(latitude, longitude)
+                            
+                            if map_path:
+                                # Keep track of file for cleanup
+                                temp_files_to_cleanup.append(map_path)
+                                
+                                # Add map to first cell
+                                map_cell = location_table.cell(0, 0)
+                                map_paragraph = map_cell.paragraphs[0]
+                                map_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                
+                                # Add a title for the map
+                                map_title = map_paragraph.add_run("Location\n")
+                                map_title.bold = True
+                                map_title.font.size = Pt(9)
+                                
+                                # Add the map image
+                                map_run = map_paragraph.add_run()
+                                map_run.add_picture(map_path, width=map_width)
+                                
+                                # Add coordinates below the map
+                                coords_text = f"\nLat: {latitude:.6f}, Lon: {longitude:.6f}"
+                                coords_run = map_paragraph.add_run(coords_text)
+                                coords_run.font.size = Pt(8)
+                        
+                        # Add compass if orientation data is available
+                        if has_orientation:
+                            orientation = photo_data['orientation']
+                            
+                            # Generate compass indicator
+                            compass_path = generate_compass_indicator(orientation)
+                            
+                            if compass_path:
+                                # Keep track of file for cleanup
+                                temp_files_to_cleanup.append(compass_path)
+                                
+                                # Add compass to second cell
+                                compass_cell = location_table.cell(0, 1)
+                                compass_paragraph = compass_cell.paragraphs[0]
+                                compass_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                
+                                # Add a title for the compass
+                                compass_title = compass_paragraph.add_run("Direction\n")
+                                compass_title.bold = True
+                                compass_title.font.size = Pt(9)
+                                
+                                # Add the compass image
+                                compass_run = compass_paragraph.add_run()
+                                compass_run.add_picture(compass_path, width=compass_width)
+                                
+                                # Add orientation below the compass
+                                direction_text = f"\nOrientation: {orientation:.1f}°"
+                                direction_run = compass_paragraph.add_run(direction_text)
+                                direction_run.font.size = Pt(8)
+                
                 # Add some space after the caption
                 if (i + 1) % images_per_page != 0 and i < len(photo_data_list) - 1:
                     doc.add_paragraph()
@@ -89,6 +176,7 @@ def create_document(photo_data_list, output_path, images_per_page=2):
         
         # Clean up any temporary files
         cleanup_temp_files(photo_data_list)
+        cleanup_map_files(temp_files_to_cleanup)
         
         return True
     
@@ -96,4 +184,5 @@ def create_document(photo_data_list, output_path, images_per_page=2):
         print(f"Error creating document: {str(e)}")
         # Clean up any temporary files on error
         cleanup_temp_files(photo_data_list)
+        cleanup_map_files(temp_files_to_cleanup)
         return False

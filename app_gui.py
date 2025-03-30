@@ -47,6 +47,15 @@ class PhotoAppendixApp:
         images_per_page_combo.state(['readonly'])
         images_per_page_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         
+        # Add include location option
+        self.include_location = tk.BooleanVar(value=True)
+        location_check = ttk.Checkbutton(
+            options_frame, 
+            text="Include location data (maps and compass)", 
+            variable=self.include_location
+        )
+        location_check.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        
         # Add manual caption option
         self.use_manual_captions = tk.BooleanVar(value=False)
         manual_caption_check = ttk.Checkbutton(
@@ -54,7 +63,7 @@ class PhotoAppendixApp:
             text="Enter captions manually", 
             variable=self.use_manual_captions
         )
-        manual_caption_check.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
+        manual_caption_check.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
         
         # Output section
         output_frame = ttk.LabelFrame(main_frame, text="Output", padding="10")
@@ -173,8 +182,13 @@ class PhotoAppendixApp:
             self.status_label.config(text="Generating document...")
             self.master.update_idletasks()
             
-            # Create document
-            success = create_document(photo_data, self.output_path, images_per_page=self.images_per_page.get())
+            # Create document with location data option
+            success = create_document(
+                photo_data, 
+                self.output_path, 
+                images_per_page=self.images_per_page.get(),
+                include_location=self.include_location.get()
+            )
             
             if success:
                 # Complete
