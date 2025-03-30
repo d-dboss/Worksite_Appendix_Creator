@@ -6,7 +6,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from photo_processor import cleanup_temp_files
-from map_generator import generate_map, generate_compass_indicator, cleanup_temp_files as cleanup_map_files
+from map_generator import generate_map, generate_compass_indicator, generate_placeholder_map, cleanup_temp_files as cleanup_map_files
 
 def create_document(photo_data_list, output_path, images_per_page=2, include_location=True):
     """
@@ -98,22 +98,28 @@ def create_document(photo_data_list, output_path, images_per_page=2, include_loc
                         location_table.autofit = False
                         location_table.width = page_width
                         
+                        # Prepare the left cell for map or empty space
+                        map_cell = location_table.cell(0, 0)
+                        map_paragraph = map_cell.paragraphs[0]
+                        map_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
                         # Add map if GPS coordinates are available
                         if has_gps:
                             latitude = photo_data['latitude']
                             longitude = photo_data['longitude']
                             
-                            # Generate map
+                            # First try to generate a real map
+                            print(f"Generating map for coordinates: {latitude}, {longitude}")
                             map_path = generate_map(latitude, longitude)
+                            
+                            # If map generation fails, use placeholder
+                            if not map_path:
+                                print("Map generation failed, using placeholder")
+                                map_path = generate_placeholder_map(latitude, longitude)
                             
                             if map_path:
                                 # Keep track of file for cleanup
                                 temp_files_to_cleanup.append(map_path)
-                                
-                                # Add map to first cell
-                                map_cell = location_table.cell(0, 0)
-                                map_paragraph = map_cell.paragraphs[0]
-                                map_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                                 
                                 # Add a title for the map
                                 map_title = map_paragraph.add_run("Location\n")
@@ -121,15 +127,31 @@ def create_document(photo_data_list, output_path, images_per_page=2, include_loc
                                 map_title.font.size = Pt(9)
                                 
                                 # Add the map image
-                                map_run = map_paragraph.add_run()
-                                map_run.add_picture(map_path, width=map_width)
-                                
-                                # Add coordinates below the map
-                                coords_text = f"\nLat: {latitude:.6f}, Lon: {longitude:.6f}"
-                                coords_run = map_paragraph.add_run(coords_text)
-                                coords_run.font.size = Pt(8)
+                                try:
+                                    map_run = map_paragraph.add_run()
+                                    map_run.add_picture(map_path, width=map_width)
+                                    
+                                    # Add coordinates below the map
+                                    coords_text = f"\nLat: {latitude:.6f}, Lon: {longitude:.6f}"
+                                    coords_run = map_paragraph.add_run(coords_text)
+                                    coords_run.font.size = Pt(8)
+                                except Exception as e:
+                                    print(f"Error adding map to document: {str(e)}")
+                                    # Add error message in the map location
+                                    error_run = map_paragraph.add_run("Map unavailable\n")
+                                    error_run.italic = True
+                                    error_run.font.color.rgb = RGBColor(255, 0, 0)
+                        else:
+                            # No GPS data available for this photo
+                            no_map_run = map_paragraph.add_run("No GPS data available")
+                            no_map_run.italic = True
+                            no_map_run.font.size = Pt(9)
                         
                         # Add compass if orientation data is available
+                        compass_cell = location_table.cell(0, 1)
+                        compass_paragraph = compass_cell.paragraphs[0]
+                        compass_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        
                         if has_orientation:
                             orientation = photo_data['orientation']
                             
@@ -140,24 +162,31 @@ def create_document(photo_data_list, output_path, images_per_page=2, include_loc
                                 # Keep track of file for cleanup
                                 temp_files_to_cleanup.append(compass_path)
                                 
-                                # Add compass to second cell
-                                compass_cell = location_table.cell(0, 1)
-                                compass_paragraph = compass_cell.paragraphs[0]
-                                compass_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                                
                                 # Add a title for the compass
                                 compass_title = compass_paragraph.add_run("Direction\n")
                                 compass_title.bold = True
                                 compass_title.font.size = Pt(9)
                                 
                                 # Add the compass image
-                                compass_run = compass_paragraph.add_run()
-                                compass_run.add_picture(compass_path, width=compass_width)
-                                
-                                # Add orientation below the compass
-                                direction_text = f"\nOrientation: {orientation:.1f}°"
-                                direction_run = compass_paragraph.add_run(direction_text)
-                                direction_run.font.size = Pt(8)
+                                try:
+                                    compass_run = compass_paragraph.add_run()
+                                    compass_run.add_picture(compass_path, width=compass_width)
+                                    
+                                    # Add orientation below the compass
+                                    direction_text = f"\nOrientation: {orientation:.1f}°"
+                                    direction_run = compass_paragraph.add_run(direction_text)
+                                    direction_run.font.size = Pt(8)
+                                except Exception as e:
+                                    print(f"Error adding compass to document: {str(e)}")
+                                    # Add error message in the compass location
+                                    error_run = compass_paragraph.add_run("Compass unavailable\n")
+                                    error_run.italic = True
+                                    error_run.font.color.rgb = RGBColor(255, 0, 0)
+                        else:
+                            # No orientation data available for this photo
+                            no_compass_run = compass_paragraph.add_run("No orientation data available")
+                            no_compass_run.italic = True
+                            no_compass_run.font.size = Pt(9)
                 
                 # Add some space after the caption
                 if (i + 1) % images_per_page != 0 and i < len(photo_data_list) - 1:
