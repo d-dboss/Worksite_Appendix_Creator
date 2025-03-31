@@ -22,28 +22,9 @@ OVERPASS_ENDPOINTS = [
     "https://overpass.openstreetmap.ru/api/interpreter"  # Russian instance
 ]
 
-def get_available_endpoint():
+def get_map_data_from_overpass(latitude, longitude, radius=300):
     """
-    Get a random available Overpass API endpoint to distribute load.
-    Returns:
-        str: URL of an available Overpass API endpoint
-    """
-    # Start with the main endpoint as default
-    endpoint = OVERPASS_ENDPOINTS[0]
-    
-    # Try a random endpoint to distribute load
-    try:
-        endpoint = random.choice(OVERPASS_ENDPOINTS)
-    except:
-        pass
-        
-    return endpoint
-
-def build_overpass_query(latitude, longitude, radius=300):
-    """
-    Build an Overpass API query to get map features around a location.
-    Enhanced to get better terrain outlines and natural features.
-    Uses a larger radius for remote locations.
+    Get map data from Overpass API with improved error handling and logging.
     
     Args:
         latitude (float): Latitude coordinate
@@ -51,44 +32,10 @@ def build_overpass_query(latitude, longitude, radius=300):
         radius (int): Radius in meters around the point
         
     Returns:
-        str: Overpass QL query
+        dict: JSON response from Overpass API or None if failed
     """
-    # Create a query with enhanced natural features for better terrain visualization
-    # Using a larger radius and more detailed feature types for remote areas
-    query = f"""
-    [out:json][timeout:45];
-    (
-      way(around:{radius},{latitude},{longitude})[highway];
-      way(around:{radius},{latitude},{longitude})[building];
-      way(around:{radius},{latitude},{longitude})[natural];
-      way(around:{radius},{latitude},{longitude})[water];
-      way(around:{radius},{latitude},{longitude})[waterway];
-      way(around:{radius},{latitude},{longitude})[landuse];
-      way(around:{radius},{latitude},{longitude})[leisure];
-      way(around:{radius},{latitude},{longitude})[amenity];
-      way(around:{radius},{latitude},{longitude})[contour];
-      way(around:{radius},{latitude},{longitude})[barrier];
-      way(around:{radius},{latitude},{longitude})[man_made];
-      way(around:{radius},{latitude},{longitude})[mountain_pass];
-      way(around:{radius},{latitude},{longitude})[coastline];
-      way(around:{radius},{latitude},{longitude})[glacier];
-      way(around:{radius},{latitude},{longitude})[ridge];
-      way(around:{radius},{latitude},{longitude})[valley];
-      rel(around:{radius},{latitude},{longitude})[natural];
-      rel(around:{radius},{latitude},{longitude})[water];
-      rel(around:{radius},{latitude},{longitude})[landuse];
-      node(around:{radius},{latitude},{longitude})[natural=peak];
-      node(around:{radius},{latitude},{longitude})[natural];
-      node(around:{radius},{latitude},{longitude})[place];
-      node(around:{radius},{latitude},{longitude})[amenity];
-    );
-    out body geom;
     """
-    return query
-
-def get_map_data_from_overpass(latitude, longitude, radius=300):
-    """
-    Get map data from Overpass API.
+    Get map data from Overpass API with improved error handling and logging.
     
     Args:
         latitude (float): Latitude coordinate
@@ -115,10 +62,12 @@ def get_map_data_from_overpass(latitude, longitude, radius=300):
         out body geom;
         """
         
-        # Get an available endpoint - try endpoints in a specific order
+        print(f"Attempting to fetch map data for coordinates: Lat {latitude}, Lon {longitude}")
+        
+        # Endpoints to try, in order of preference
         endpoints = [
             "https://overpass-api.de/api/interpreter",
-            "https://overpass.private.coffee/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter", 
             "https://overpass.osm.jp/api/interpreter",
             "https://overpass.openstreetmap.ru/api/interpreter"
         ]
@@ -132,24 +81,37 @@ def get_map_data_from_overpass(latitude, longitude, radius=300):
                     endpoint,
                     data={"data": query},
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
-                    timeout=30
+                    timeout=30  # Set a reasonable timeout
                 )
                 
                 if response.status_code == 200:
                     print(f"Successfully connected to {endpoint}")
                     break
+                else:
+                    print(f"Endpoint {endpoint} returned status code: {response.status_code}")
+                    # Add delay to avoid rate limiting
+                    time.sleep(1)
             except Exception as e:
                 print(f"Error with endpoint {endpoint}: {str(e)}")
+                # Add delay to avoid rate limiting
+                time.sleep(1)
                 continue
         
         # Check if we got a successful response
         if response and response.status_code == 200:
             try:
                 data = response.json()
-                print(f"Successfully retrieved data with {len(data.get('elements', []))} elements")
+                element_count = len(data.get('elements', []))
+                print(f"Successfully retrieved data with {element_count} elements")
+                
+                if element_count == 0:
+                    print("Warning: No map elements returned for this location")
+                
                 return data
             except Exception as e:
                 print(f"Error parsing JSON response: {str(e)}")
+                if response.text:
+                    print(f"Response text: {response.text[:200]}...")  # Print first 200 chars
                 return None
         else:
             status = response.status_code if response else "No response"
@@ -163,7 +125,6 @@ def get_map_data_from_overpass(latitude, longitude, radius=300):
 def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zoom_factor=1.0):
     """
     Render a map image from Overpass API data with improved visibility.
-    Simplified for better rendering of map lines and features.
     
     Args:
         data (dict): JSON response from Overpass API
@@ -229,14 +190,6 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         y = int((max_lat - lat) / (max_lat - min_lat) * height)
         return (x, y)
     
-    # Draw a subtle grid
-    grid_color = (230, 230, 230)
-    for i in range(0, width, width//10):
-        draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
-    
-    for i in range(0, height, height//10):
-        draw.line([(0, i), (width, i)], fill=grid_color, width=1)
-    
     # Define simple, clear color scheme
     colors = {
         'water': (170, 211, 223),       # Blue
@@ -257,126 +210,7 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         }
     }
     
-    # Render different elements in a simplified way
-    
-    # 1. First render areas (landuse, water bodies)
-    for element in data.get('elements', []):
-        if element['type'] != 'way' or 'geometry' not in element or len(element['geometry']) < 3:
-            continue
-            
-        tags = element.get('tags', {})
-        
-        # Skip non-area objects for this pass
-        if not (tags.get('landuse') or tags.get('natural') or tags.get('water')):
-            continue
-        
-        points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
-        
-        # Choose fill color based on tags
-        fill_color = None
-        if tags.get('water') or tags.get('natural') == 'water':
-            fill_color = colors['water']
-        elif tags.get('natural') == 'forest' or tags.get('landuse') == 'forest':
-            fill_color = colors['forest']
-        elif tags.get('landuse') == 'residential':
-            fill_color = colors['residential']
-        elif tags.get('natural'):
-            fill_color = colors['natural']
-        
-        if fill_color and len(points) >= 3:
-            try:
-                draw.polygon(points, fill=fill_color, outline=None)
-            except Exception as e:
-                # Fallback to simpler shapes if polygon fails
-                pass
-    
-    # 2. Then draw waterways
-    for element in data.get('elements', []):
-        if element['type'] != 'way' or 'geometry' not in element or len(element['geometry']) < 2:
-            continue
-            
-        tags = element.get('tags', {})
-        if not tags.get('waterway'):
-            continue
-            
-        points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
-        
-        try:
-            # Draw waterway with thickness based on type
-            width = 3 if tags.get('waterway') == 'river' else 2
-            draw.line(points, fill=colors['waterway'], width=width)
-        except Exception as e:
-            pass
-    
-    # 3. Draw all highways
-    for element in data.get('elements', []):
-        if element['type'] != 'way' or 'geometry' not in element:
-            continue
-            
-        tags = element.get('tags', {})
-        highway_type = tags.get('highway')
-        
-        if not highway_type:
-            continue
-            
-        points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
-        
-        if len(points) < 2:
-            continue
-            
-        # Select color and width based on highway type
-        color = colors['highway'].get(highway_type, colors['highway']['default'])
-        
-        # Set line width based on road importance
-        if highway_type in ['motorway', 'trunk', 'primary']:
-            width = 4
-        elif highway_type in ['secondary']:
-            width = 3
-        elif highway_type in ['tertiary', 'residential']:
-            width = 2
-        else:
-            width = 1
-        
-        try:
-            draw.line(points, fill=color, width=width)
-        except Exception as e:
-            pass
-    
-    # 4. Draw buildings
-    for element in data.get('elements', []):
-        if element['type'] != 'way' or 'geometry' not in element:
-            continue
-            
-        tags = element.get('tags', {})
-        if not tags.get('building'):
-            continue
-            
-        points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
-        
-        if len(points) < 3:
-            continue
-            
-        try:
-            draw.polygon(points, fill=colors['building'], outline=(120, 120, 120))
-        except Exception as e:
-            pass
-    
-    # Function to convert lat/lon to pixel coordinates
-    def latlon_to_pixel(lat, lon):
-        x = int((lon - min_lon) / (max_lon - min_lon) * width)
-        y = int((max_lat - lat) / (max_lat - min_lat) * height)
-        return (x, y)
-    
-    # Draw a subtle grid for reference
-    grid_color = (220, 220, 220)
-    for i in range(0, width, width//10):
-        draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
-    
-    for i in range(0, height, height//10):
-        draw.line([(0, i), (width, i)], fill=grid_color, width=1)
-    
-    # Process elements by type for layered rendering (background first, then details)
-    # First, separate elements by type for proper layering
+    # Process elements by type for layered rendering
     landuse_elements = []
     water_elements = []
     waterway_elements = []
@@ -405,6 +239,14 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
     
     # Render layers from background to foreground
     
+    # Draw a subtle grid for reference
+    grid_color = (220, 220, 220)
+    for i in range(0, width, width//10):
+        draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
+    
+    for i in range(0, height, height//10):
+        draw.line([(0, i), (width, i)], fill=grid_color, width=1)
+    
     # 1. Landuse (background)
     for element in landuse_elements:
         points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
@@ -417,24 +259,49 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         # Choose colors based on landuse type
         if landuse_type in ['forest', 'wood']:
             color = (34, 139, 34)  # Forest green
-            fill = (34, 139, 34, 150)  # Semi-transparent green
+            fill = (34, 139, 34)
         elif landuse_type in ['residential', 'commercial']:
             color = (245, 222, 179)  # Tan
-            fill = (245, 222, 179, 150)  # Semi-transparent tan
+            fill = (245, 222, 179)
         elif landuse_type in ['farmland', 'farm', 'meadow']:
             color = (173, 209, 158)  # Light green
-            fill = (173, 209, 158, 150)  # Semi-transparent light green
+            fill = (173, 209, 158)
         elif landuse_type in ['industrial']:
             color = (209, 198, 207)  # Light purple-gray
-            fill = (209, 198, 207, 150)  # Semi-transparent gray
+            fill = (209, 198, 207)
         else:
             color = (200, 200, 200)  # Default gray
-            fill = (200, 200, 200, 120)  # Semi-transparent gray
+            fill = (200, 200, 200)
         
-        # Draw the polygon
+        # Draw the polygon - with improved handling to prevent diagonal artifacts
         try:
-            draw.polygon(points, outline=color, fill=fill)
-        except:
+            # Check if the polygon's first and last points match (closed shape)
+            if len(points) > 3:  # Need at least 3 points for a valid polygon
+                # Make a copy of the points list to avoid modifying the original
+                drawing_points = list(points)
+                
+                # Ensure the polygon is closed (first and last points match)
+                if drawing_points[0] != drawing_points[-1]:
+                    drawing_points.append(drawing_points[0])
+                
+                # Remove any duplicate adjacent points that might cause rendering issues
+                cleaned_points = [drawing_points[0]]
+                for i in range(1, len(drawing_points)):
+                    if drawing_points[i] != cleaned_points[-1]:
+                        cleaned_points.append(drawing_points[i])
+                
+                # Only draw if we have enough points for a valid polygon
+                if len(cleaned_points) >= 3:
+                    draw.polygon(cleaned_points, outline=color, fill=fill)
+                else:
+                    # Fall back to drawing lines if not enough points for a polygon
+                    draw.line(points, fill=color, width=1)
+            else:
+                # Not enough points for a polygon, draw lines instead
+                draw.line(points, fill=color, width=1)
+        except Exception as e:
+            print(f"Error drawing polygon: {str(e)}")
+            # Fall back to drawing lines
             try:
                 draw.line(points, fill=color, width=1)
             except:
@@ -452,19 +319,19 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         # Choose colors based on natural type
         if natural_type == 'water':
             color = (0, 112, 184)  # Blue
-            fill = (0, 132, 204, 180)  # Semi-transparent blue
+            fill = (0, 132, 204)  # Semi-transparent blue
         elif natural_type in ['wood', 'tree', 'forest']:
             color = (12, 128, 44)  # Dark green
-            fill = (12, 128, 44, 150)  # Semi-transparent green
+            fill = (12, 128, 44)  # Semi-transparent green
         elif natural_type in ['grassland', 'heath']:
             color = (122, 184, 95)  # Light green
-            fill = (122, 184, 95, 150)  # Semi-transparent light green
+            fill = (122, 184, 95)  # Semi-transparent light green
         elif natural_type in ['cliff', 'ridge', 'scree']:
             color = (140, 120, 100)  # Brown
-            fill = (140, 120, 100, 150)  # Semi-transparent brown
+            fill = (140, 120, 100)  # Semi-transparent brown
         else:
             color = (120, 160, 120)  # Default green
-            fill = (120, 160, 120, 150)  # Semi-transparent green
+            fill = (120, 160, 120)  # Semi-transparent green
         
         # Draw the element
         if len(points) > 2:
@@ -481,16 +348,39 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
             except:
                 pass
     
-    # 3. Water bodies (drawn over natural features)
+    # 3. Water bodies
     for element in water_elements:
         points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
         if len(points) < 3:
             continue
             
-        # Draw water body
+        # Draw water body - with improved handling to prevent diagonal artifacts
         try:
-            draw.polygon(points, outline=(0, 112, 184), fill=(0, 132, 204, 180))
-        except:
+            # Check if we have enough points and ensure the polygon is closed
+            if len(points) > 3:
+                # Make a copy of the points list to avoid modifying the original
+                drawing_points = list(points)
+                
+                # Ensure the polygon is closed (first and last points match)
+                if drawing_points[0] != drawing_points[-1]:
+                    drawing_points.append(drawing_points[0])
+                
+                # Remove any duplicate adjacent points that might cause rendering issues
+                cleaned_points = [drawing_points[0]]
+                for i in range(1, len(drawing_points)):
+                    if drawing_points[i] != cleaned_points[-1]:
+                        cleaned_points.append(drawing_points[i])
+                
+                # Only draw if we have enough points for a valid polygon
+                if len(cleaned_points) >= 3:
+                    draw.polygon(cleaned_points, outline=(0, 112, 184), fill=(0, 132, 204))
+                else:
+                    draw.line(points, fill=(0, 112, 184), width=2)
+            else:
+                # Not enough points for a polygon, draw lines instead
+                draw.line(points, fill=(0, 112, 184), width=2)
+        except Exception as e:
+            print(f"Error drawing water: {str(e)}")
             try:
                 draw.line(points, fill=(0, 112, 184), width=2)
             except:
@@ -525,25 +415,14 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         if len(points) < 2:
             continue
             
-        tags = element.get('tags', {})
-        color = (100, 100, 100)  # Default gray
-        width = 1
-        fill = None
-        
-        # Draw the element
-        if len(points) > 2 and fill:
-            try:
-                draw.polygon(points, outline=color, fill=fill)
-            except:
-                try:
-                    draw.line(points, fill=color, width=width)
-                except:
-                    pass
-        else:
-            try:
-                draw.line(points, fill=color, width=width)
-            except:
-                pass
+        # Draw generic element
+        try:
+            if len(points) > 2:
+                draw.polygon(points, outline=(100, 100, 100), fill=None)
+            else:
+                draw.line(points, fill=(100, 100, 100), width=1)
+        except:
+            pass
     
     # 6. Roads
     for element in highways:
@@ -574,7 +453,7 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         except:
             pass
     
-    # 7. Buildings (should be on top of most features)
+    # 7. Buildings
     for element in buildings:
         points = [latlon_to_pixel(point['lat'], point['lon']) for point in element['geometry']]
         if len(points) < 3:
@@ -582,12 +461,11 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
             
         # Draw the building
         try:
-            draw.polygon(points, outline=(90, 90, 90), fill=(169, 169, 169, 180))
+            draw.polygon(points, outline=(90, 90, 90), fill=(169, 169, 169))
         except:
             pass
     
-    # Place the marker exactly at the photo coordinates - use the center of the image
-    # This is the most reliable way to ensure the marker is at the correct location
+    # Place the marker exactly at the photo coordinates
     photo_pixel = (width // 2, height // 2)
     
     # Draw the marker
@@ -598,9 +476,9 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
     draw.ellipse([
         (photo_pixel[0] - marker_radius + shadow_offset, photo_pixel[1] - marker_radius + shadow_offset),
         (photo_pixel[0] + marker_radius + shadow_offset, photo_pixel[1] + marker_radius + shadow_offset)
-    ], fill=(50, 50, 50, 180))
+    ], fill=(50, 50, 50))
     
-    # Draw an outer white ring for visibility against any background
+    # Draw an outer white ring for visibility
     outer_radius = marker_radius + 2
     draw.ellipse([
         (photo_pixel[0] - outer_radius, photo_pixel[1] - outer_radius),
@@ -640,7 +518,7 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         
         # Text background
         draw.rectangle([(5, height - 25), (text_width + 15, height - 5)], 
-                      fill=(255, 255, 255, 200))
+                      fill=(255, 255, 255))
         draw.text((10, height - 20), coords_text, fill=(0, 0, 0), font=small_font)
         
         # Add attribution (required for OpenStreetMap data)
@@ -648,7 +526,7 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
         text_bbox = draw.textbbox((0, 0), attribution, font=small_font)
         text_width = text_bbox[2] - text_bbox[0]
         draw.rectangle([(width - text_width - 15, height - 25), (width - 5, height - 5)], 
-                      fill=(255, 255, 255, 200))
+                      fill=(255, 255, 255))
         draw.text((width - text_width - 10, height - 20), attribution, fill=(0, 0, 0), font=small_font)
     except Exception as e:
         print(f"Error adding text to map: {str(e)}")
@@ -657,100 +535,11 @@ def render_map_from_overpass_data(data, latitude, longitude, size=(300, 300), zo
     draw.rectangle([(0, 0), (width-1, height-1)], outline=(180, 180, 180), width=1)
     
     return img
-    
-    # Add coordinates and attribution
-    try:
-        # Try to load a font, fall back to default if not available
-        try:
-            font = ImageFont.truetype("Arial", 10)
-            small_font = ImageFont.truetype("Arial", 8)
-        except IOError:
-            try:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 10)
-                small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
-            except:
-                font = ImageFont.load_default()
-                small_font = ImageFont.load_default()
-        
-        # Add coordinates
-        coords_text = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"
-        text_bbox = draw.textbbox((0, 0), coords_text, font=small_font)
-        text_width = text_bbox[2] - text_bbox[0]
-        draw.rectangle([(5, height - 25), (text_width + 15, height - 5)], fill=(255, 255, 255, 180))
-        draw.text((10, height - 20), coords_text, fill=(0, 0, 0), font=small_font)
-        
-        # Add attribution (required for OpenStreetMap data)
-        attribution = "© OpenStreetMap contributors"
-        text_bbox = draw.textbbox((0, 0), attribution, font=small_font)
-        text_width = text_bbox[2] - text_bbox[0]
-        draw.rectangle([(width - text_width - 15, height - 25), (width - 5, height - 5)], fill=(255, 255, 255, 180))
-        draw.text((width - text_width - 10, height - 20), attribution, fill=(0, 0, 0), font=small_font)
-    except Exception as e:
-        print(f"Error adding text to map: {str(e)}")
-    
-    # Draw a subtle border around the map
-    draw.rectangle([(0, 0), (width-1, height-1)], outline=(160, 160, 160), width=1)
-    
-    return img
-
-def generate_map(latitude, longitude, zoom=15, size=(300, 300)):
-    """
-    Generate a map image with a pin at the specified coordinates using OpenStreetMap data via Overpass API.
-    Simplified to focus on clear visualization with clean lines.
-    
-    Args:
-        latitude (float): Latitude coordinate
-        longitude (float): Longitude coordinate
-        zoom (int): Zoom level for the map (default: 15)
-        size (tuple): Size of the output image (width, height)
-        
-    Returns:
-        str: Path to the generated map image (temporary file)
-    """
-    try:
-        print(f"Generating map for coordinates: Lat {latitude}, Lon {longitude}")
-        
-        # Calculate radius based on zoom level (higher zoom = smaller radius)
-        base_radius = 500  # Moderate radius to get sufficient context
-        radius = int(base_radius / (zoom / 10))
-        
-        # Get map data from Overpass API
-        map_data = get_map_data_from_overpass(latitude, longitude, radius)
-        
-        # Check if we got meaningful data
-        if map_data and 'elements' in map_data and len(map_data.get('elements', [])) > 3:
-            # Render the map
-            map_img = render_map_from_overpass_data(map_data, latitude, longitude, size, zoom/10.0)
-            
-            if map_img:
-                # Save to temporary file
-                temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-                temp_img.close()
-                map_img.save(temp_img.name)
-                
-                print(f"Successfully generated map: {temp_img.name}")
-                return temp_img.name
-        
-        # If we get here, either the API request failed or rendering failed
-        print("Using placeholder map instead")
-        return generate_placeholder_map(latitude, longitude, zoom, size)
-        
-    except Exception as e:
-        print(f"Error generating map: {str(e)}")
-        return generate_placeholder_map(latitude, longitude, zoom, size)
-        
-        # If we get here, either the API request failed or rendering failed
-        print("Falling back to placeholder map")
-        return generate_placeholder_map(latitude, longitude, zoom, size)
-        
-    except Exception as e:
-        print(f"Error generating map: {str(e)}")
-        return generate_placeholder_map(latitude, longitude, zoom, size)
 
 def generate_placeholder_map(latitude, longitude, zoom=14, size=(300, 300)):
     """
     Generate a simplified placeholder map when Overpass API is unavailable.
-    Focused on clarity and clean lines.
+    Creates visually distinct maps for different coordinates without polygon rendering issues.
     
     Args:
         latitude (float): Latitude coordinate
@@ -764,15 +553,134 @@ def generate_placeholder_map(latitude, longitude, zoom=14, size=(300, 300)):
     try:
         print(f"Generating placeholder map for: Lat {latitude}, Lon {longitude}")
         
-        # Create a clean, simple map image
         width, height = size
-        img = Image.new('RGB', size, (240, 245, 250))  # Light blue-gray background
+        
+        # Use the coordinates to influence the background color for visual distinction
+        lat_frac = abs((latitude - int(latitude)) * 100)
+        lon_frac = abs((longitude - int(longitude)) * 100)
+        
+        r = 220 + int(lat_frac * 0.35) % 35  # Range: 220-255
+        g = 220 + int(lon_frac * 0.35) % 35  # Range: 220-255
+        b = 240  # Keep blue component constant for a blue-ish background
+        
+        # Create a new image with the generated background color
+        img = Image.new('RGB', size, (r, g, b))
+        
+        # Create a separate canvas for land to avoid polygon issues
+        land_canvas = Image.new('RGBA', size, (0, 0, 0, 0))  # Transparent
+        land_draw = ImageDraw.Draw(land_canvas)
+        
+        # Create separate canvas for water too
+        water_canvas = Image.new('RGBA', size, (0, 0, 0, 0))  # Transparent
+        water_draw = ImageDraw.Draw(water_canvas)
+        
+        # Generate colors that are influenced by the coordinates
+        land_r = 220 + int(lon_frac * 0.3) % 35
+        land_g = 220 + int(lat_frac * 0.3) % 35
+        land_b = 180 + int((lat_frac + lon_frac) * 0.2) % 40
+        land_color = (land_r, land_g, land_b, 230)  # With alpha
+        
+        water_r = 130 + int(lat_frac * 0.25) % 40
+        water_g = 170 + int(lon_frac * 0.25) % 40
+        water_b = 210 + int((lat_frac + lon_frac) * 0.15) % 45
+        water_color = (water_r, water_g, water_b, 230)  # With alpha
+        
+        # Use coordinates to create a unique land/water pattern
+        land_offset_y = height//2 + int(lat_frac % 20) - 10
+        
+        # Water takes up the top portion of the map
+        water_points = [
+            (0, 0),
+            (width, 0),
+            (width, land_offset_y),
+            (0, land_offset_y)
+        ]
+        water_draw.polygon(water_points, fill=water_color)
+        
+        # Land creates a uniquely shaped coastline based on coordinates
+        land_point1_x = int(lon_frac % 40)
+        land_point2_x = width//3 + int(lat_frac % 40) - 20
+        land_point3_x = 2*width//3 + int((lat_frac + lon_frac) % 50) - 25
+        land_point4_x = width - int(lat_frac % 30)
+        
+        land_point1_y = land_offset_y + int(lon_frac % 10) - 5
+        land_point2_y = land_offset_y + int(lat_frac % 15) - 7
+        land_point3_y = land_offset_y + int((lat_frac * lon_frac) % 12) - 6
+        land_point4_y = land_offset_y + int((lat_frac + lon_frac) % 20) - 10
+        
+        land_points = [
+            (0, land_point1_y),
+            (land_point1_x, land_offset_y),
+            (land_point2_x, land_point2_y),
+            (land_point3_x, land_point3_y),
+            (land_point4_x, land_point4_y),
+            (width, land_offset_y),
+            (width, height),
+            (0, height)
+        ]
+        land_draw.polygon(land_points, fill=land_color)
+        
+        # Composite the layers onto the main image
+        img = Image.alpha_composite(img.convert('RGBA'), water_canvas)
+        img = Image.alpha_composite(img, land_canvas).convert('RGB')
         draw = ImageDraw.Draw(img)
         
-        # Define colors
-        grid_color = (220, 220, 220)   # Light gray for grid
-        text_color = (80, 80, 80)      # Dark gray for text
-        pin_color = (255, 0, 0)        # Red for pin
+        # Draw a grid for reference (no polygon rendering issues with lines)
+        grid_color = (max(r-30, 180), max(g-30, 180), max(b-30, 180))
+        grid_spacing = min(width, height) // 10
+        
+        for i in range(0, width, grid_spacing):
+            draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
+        
+        for i in range(0, height, grid_spacing):
+            draw.line([(0, i), (width, i)], fill=grid_color, width=1)
+        
+        # Draw roads (just lines - no polygon rendering issues)
+        road_offset_1 = width//4 + int(lat_frac % 40) - 20
+        road_offset_2 = height//3 + int(lon_frac % 40) - 20
+        
+        # Draw main roads with random variation based on coordinates
+        draw.line([(road_offset_1, 0), (road_offset_1, height)], fill=(255, 255, 255), width=2)
+        draw.line([(0, road_offset_2), (width, road_offset_2)], fill=(255, 255, 255), width=2)
+        
+        # Draw diagonal road with variation based on coordinates
+        draw.line([(width//2 + int(lat_frac % 30) - 15, 0), 
+                   (3*width//4 + int(lon_frac % 30) - 15, height)], 
+                  fill=(255, 255, 255), width=2)
+        
+        # Draw secondary road
+        secondary_road_y = 2*height//3 + int(lat_frac % 30) - 15
+        draw.line([(0, secondary_road_y), (width, secondary_road_y)], 
+                 fill=(255, 255, 255), width=1)
+        
+        # Pin at center of map
+        pin_x, pin_y = width // 2, height // 2
+        marker_radius = 8
+        
+        # Draw shadow
+        shadow_offset = 2
+        draw.ellipse([
+            (pin_x - marker_radius + shadow_offset, pin_y - marker_radius + shadow_offset),
+            (pin_x + marker_radius + shadow_offset, pin_y + marker_radius + shadow_offset)
+        ], fill=(50, 50, 50))
+        
+        # Draw white outline for visibility
+        draw.ellipse([
+            (pin_x - marker_radius - 2, pin_y - marker_radius - 2),
+            (pin_x + marker_radius + 2, pin_y + marker_radius + 2)
+        ], outline=(255, 255, 255), width=2)
+        
+        # Draw marker
+        draw.ellipse([
+            (pin_x - marker_radius, pin_y - marker_radius),
+            (pin_x + marker_radius, pin_y + marker_radius)
+        ], fill=(255, 0, 0), outline=(0, 0, 0), width=1)
+        
+        # Draw white center
+        draw.ellipse([
+            (pin_x - 2, pin_y - 2),
+            (pin_x + 2, pin_y + 2)
+        ], fill=(255, 255, 255))
         
         # Try to load a font
         try:
@@ -786,259 +694,51 @@ def generate_placeholder_map(latitude, longitude, zoom=14, size=(300, 300)):
             font = ImageFont.load_default()
             small_font = ImageFont.load_default()
         
-        # Draw grid lines
-        for i in range(0, width, width//10):
-            draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
-        
-        for i in range(0, height, height//10):
-            draw.line([(0, i), (width, i)], fill=grid_color, width=1)
-        
-        # Simple geography features - for placeholder only
-        # Draw simplified land area
-        land_color = (245, 245, 235)  # Light tan
-        land_shape = [
-            (0, height//2), 
-            (width//3, height//2-15),
-            (2*width//3, height//2-5),
-            (width, height//2+10),
-            (width, height),
-            (0, height)
-        ]
-        draw.polygon(land_shape, fill=land_color)
-        
-        # Draw a simple road
-        road_color = (255, 255, 255)  # White
-        draw.line([(width//4, 0), (width//4, height)], fill=road_color, width=3)
-        draw.line([(0, height//2), (width, height//2)], fill=road_color, width=3)
-        
-        # Pin at center of map
-        pin_x, pin_y = width // 2, height // 2
-        marker_radius = 8
-        
-        # White outline for visibility
-        draw.ellipse([(pin_x-marker_radius-2, pin_y-marker_radius-2), 
-                     (pin_x+marker_radius+2, pin_y+marker_radius+2)], 
-                    outline=(255, 255, 255), width=2)
-        
-        # Shadow
-        shadow_offset = 2
-        draw.ellipse([(pin_x-marker_radius+shadow_offset, pin_y-marker_radius+shadow_offset), 
-                     (pin_x+marker_radius+shadow_offset, pin_y+marker_radius+shadow_offset)], 
-                    fill=(50, 50, 50))
-        
-        # Red marker
-        draw.ellipse([(pin_x-marker_radius, pin_y-marker_radius), 
-                     (pin_x+marker_radius, pin_y+marker_radius)], 
-                    fill=pin_color, outline=(0, 0, 0), width=1)
-        
-        # White center dot
-        draw.ellipse([(pin_x-2, pin_y-2), (pin_x+2, pin_y+2)], 
-                    fill=(255, 255, 255))
-        
-        # Title
-        title = "Location Map"
+        # Add title indicating this is a placeholder
+        title = "Location Map (Placeholder)"
         text_bbox = draw.textbbox((0, 0), title, font=font)
         text_width = text_bbox[2] - text_bbox[0]
-        draw.text((width//2 - text_width//2, 5), title, fill=text_color, font=font)
         
-        # Coordinates with background for readability
-        lat_str = f"Lat: {latitude:.6f}"
-        lon_str = f"Lon: {longitude:.6f}"
+        # White background for text
+        text_bg_padding = 4
+        draw.rectangle([
+            (width//2 - text_width//2 - text_bg_padding, 5 - text_bg_padding),
+            (width//2 + text_width//2 + text_bg_padding, 5 + text_bbox[3] - text_bbox[1] + text_bg_padding)
+        ], fill=(255, 255, 255))
         
-        lat_bbox = draw.textbbox((0, 0), lat_str, font=small_font)
-        lat_width = lat_bbox[2] - lat_bbox[0]
-        lon_bbox = draw.textbbox((0, 0), lon_str, font=small_font)
-        lon_width = lon_bbox[2] - lon_bbox[0]
+        # Draw title
+        draw.text((width//2 - text_width//2, 5), title, fill=(80, 80, 80), font=font)
         
-        max_width = max(lat_width, lon_width)
-        
-        # Background for text
-        draw.rectangle([(width//2 - max_width//2 - 5, height-35), 
-                       (width//2 + max_width//2 + 5, height-5)], 
-                      fill=(255, 255, 255))
-        
-        # Coordinates text
-        draw.text((width//2 - lat_width//2, height-25), lat_str, fill=text_color, font=small_font)
-        draw.text((width//2 - lon_width//2, height-15), lon_str, fill=text_color, font=small_font)
-        
-        # Attribution
-        attribution = "© OpenStreetMap contributors"
-        text_bbox = draw.textbbox((0, 0), attribution, font=small_font)
+        # Add coordinates
+        coords_text = f"Lat: {latitude:.6f}, Lon: {longitude:.6f}"
+        text_bbox = draw.textbbox((0, 0), coords_text, font=small_font)
         text_width = text_bbox[2] - text_bbox[0]
-        draw.rectangle([(width - text_width - 10, 5), (width - 5, 20)], fill=(255, 255, 255))
-        draw.text((width - text_width - 5, 8), attribution, fill=text_color, font=small_font)
         
-        # Save to temporary file
-        temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
-        temp_img.close()
-        img.save(temp_img.name)
+        # Background for coordinates
+        draw.rectangle([
+            (5, height - 25),
+            (text_width + 15, height - 5)
+        ], fill=(255, 255, 255))
         
-        return temp_img.name
-        
-    except Exception as e:
-        print(f"Error generating placeholder map: {str(e)}")
-        return None
-        
-        # Define colors
-        water_color = (128, 195, 230)  # Light blue for water
-        land_color = (240, 240, 224)   # Light tan for land
-        road_color = (255, 255, 255)   # White for roads
-        grid_color = (200, 200, 200)   # Light gray for grid
-        text_color = (80, 80, 80)      # Dark gray for text
-        pin_color = (255, 0, 0)        # Red for pin
-        
-        # Try to load a font, fall back to default if not available
-        try:
-            try:
-                font = ImageFont.truetype("Arial", 12)
-                small_font = ImageFont.truetype("Arial", 8)
-            except:
-                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
-                small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
-        except IOError:
-            font = ImageFont.load_default()
-            small_font = ImageFont.load_default()
-        
-        # Draw a nice background with some map features
-        # Land mass (simplified representation)
-        land_shape = [
-            (0, height//2), 
-            (width//4, height//2-20),
-            (width//2, height//2-10),
-            (3*width//4, height//2+15),
-            (width, height//2+5),
-            (width, height),
-            (0, height)
-        ]
-        draw.polygon(land_shape, fill=land_color)
-        
-        # Add some terrain features
-        # Hills
-        hill1_shape = [
-            (width//6, height//2),
-            (width//4, height//3+15),
-            (width//3, height//2-5)
-        ]
-        hill2_shape = [
-            (width//2, height//2+5),
-            (2*width//3, height//3+25),
-            (3*width//4, height//2+10)
-        ]
-        draw.polygon(hill1_shape, fill=(220, 220, 204), outline=(200, 200, 180))
-        draw.polygon(hill2_shape, fill=(220, 220, 204), outline=(200, 200, 180))
-        
-        # Water
-        water_shape = [
-            (0, 0),
-            (width, 0),
-            (width, height//2+5),
-            (3*width//4, height//2+15),
-            (width//2, height//2-10),
-            (width//4, height//2-20),
-            (0, height//2)
-        ]
-        draw.polygon(water_shape, fill=water_color)
-        
-        # Draw contour lines for terrain
-        for i in range(1, 5):
-            offset = i * 10
-            contour_shape = [
-                (width//6 + offset, height//2 - offset//2),
-                (width//4 + offset//2, height//3 + 15 - offset//3),
-                (width//3 + offset, height//2 - 5 - offset//2)
-            ]
-            draw.line(contour_shape, fill=(180, 180, 160), width=1)
-            
-            contour_shape2 = [
-                (width//2 + offset, height//2 + 5 - offset//2),
-                (2*width//3 + offset//2, height//3 + 25 - offset//3),
-                (3*width//4 + offset, height//2 + 10 - offset//2)
-            ]
-            draw.line(contour_shape2, fill=(180, 180, 160), width=1)
-        
-        # Draw grid lines (lat/long grid)
-        for i in range(0, width, width//8):
-            draw.line([(i, 0), (i, height)], fill=grid_color, width=1)
-        
-        for i in range(0, height, height//8):
-            draw.line([(0, i), (width, i)], fill=grid_color, width=1)
-            
-        # Draw a few "roads"
-        draw.line([(width//4, 0), (width//4, height)], fill=road_color, width=2)
-        draw.line([(0, height//3), (width, height//3)], fill=road_color, width=2)
-        draw.line([(width//2, 0), (3*width//4, height)], fill=road_color, width=2)
-        
-        # Draw a border
-        draw.rectangle([(0, 0), (width-1, height-1)], outline=(180, 180, 180), width=2)
-        
-        # The pin MUST represent the exact photo location coordinates
-        # For placeholder maps, this is always the center of the image
-        pin_x, pin_y = width // 2, height // 2
-        
-        # Draw a nicer pin
-        pin_radius = 8
-        # Draw a shadow
-        draw.ellipse([(pin_x-pin_radius+2, pin_y-pin_radius+2), 
-                      (pin_x+pin_radius+2, pin_y+pin_radius+2)], 
-                     fill=(100, 100, 100))
-        # Draw the pin circle
-        draw.ellipse([(pin_x-pin_radius, pin_y-pin_radius), 
-                      (pin_x+pin_radius, pin_y+pin_radius)], 
-                     fill=pin_color, outline=(0, 0, 0))
-        # Draw a small white dot in the center
-        draw.ellipse([(pin_x-2, pin_y-2), (pin_x+2, pin_y+2)], fill=(255, 255, 255))
-        
-        # Add title
-        title = "Location Map (Offline)"
-        text_bbox = draw.textbbox((0, 0), title, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        draw.text((width//2 - text_width//2, 5), title, fill=text_color, font=font)
-        
-        # Format coordinates to a reasonable precision
-        lat_str = f"Lat: {latitude:.6f}"
-        lon_str = f"Lon: {longitude:.6f}"
-        
-        # Add coordinates at the bottom
-        text_bbox = draw.textbbox((0, 0), lat_str, font=small_font)
-        lat_width = text_bbox[2] - text_bbox[0]
-        text_bbox = draw.textbbox((0, 0), lon_str, font=small_font)
-        lon_width = text_bbox[2] - text_bbox[0]
-        
-        # Add background for better readability
-        draw.rectangle([(width//2 - max(lat_width, lon_width)//2 - 5, height-35), 
-                       (width//2 + max(lat_width, lon_width)//2 + 5, height-5)], 
-                      fill=(255, 255, 255, 128))
-        
-        draw.text((width//2 - lat_width//2, height-25), lat_str, fill=text_color, font=small_font)
-        draw.text((width//2 - lon_width//2, height-15), lon_str, fill=text_color, font=small_font)
-        
-        # Add compass rose in corner
-        compass_radius = 15
-        compass_x, compass_y = width - compass_radius - 10, compass_radius + 10
-        # Draw compass circle
-        draw.ellipse([(compass_x-compass_radius, compass_y-compass_radius),
-                      (compass_x+compass_radius, compass_y+compass_radius)],
-                     outline=text_color, width=1)
-        # Draw N-S-E-W lines
-        draw.line([(compass_x, compass_y-compass_radius+3), (compass_x, compass_y+compass_radius-3)], 
-                 fill=text_color, width=1)
-        draw.line([(compass_x-compass_radius+3, compass_y), (compass_x+compass_radius-3, compass_y)], 
-                 fill=text_color, width=1)
-        # Add N-E-S-W labels
-        draw.text((compass_x-3, compass_y-compass_radius-8), "N", fill=text_color, font=small_font)
-        draw.text((compass_x+compass_radius+2, compass_y-3), "E", fill=text_color, font=small_font)
-        draw.text((compass_x-3, compass_y+compass_radius+2), "S", fill=text_color, font=small_font)
-        draw.text((compass_x-compass_radius-8, compass_y-3), "W", fill=text_color, font=small_font)
-        
-        # Add zoom indicator
-        zoom_text = f"Zoom: {zoom}x"
-        draw.text((10, 10), zoom_text, fill=text_color, font=small_font)
+        # Draw coordinates
+        draw.text((10, height - 20), coords_text, fill=(80, 80, 80), font=small_font)
         
         # Add attribution
         attribution = "© OpenStreetMap contributors"
         text_bbox = draw.textbbox((0, 0), attribution, font=small_font)
         text_width = text_bbox[2] - text_bbox[0]
-        draw.text((width - text_width - 5, height - 15), attribution, fill=text_color, font=small_font)
+        
+        # Background for attribution
+        draw.rectangle([
+            (width - text_width - 10, height - 15 - text_bbox[3] + text_bbox[1]),
+            (width - 5, height - 5)
+        ], fill=(255, 255, 255))
+        
+        # Draw attribution
+        draw.text((width - text_width - 5, height - 15), attribution, fill=(80, 80, 80), font=small_font)
+        
+        # Border around the map
+        draw.rectangle([(0, 0), (width-1, height-1)], outline=(180, 180, 180), width=1)
         
         # Save to temporary file
         temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
@@ -1049,7 +749,100 @@ def generate_placeholder_map(latitude, longitude, zoom=14, size=(300, 300)):
         
     except Exception as e:
         print(f"Error generating placeholder map: {str(e)}")
-        return None
+        
+        # Last resort fallback - generate a super simple map
+        try:
+            # Create a very basic map with minimal features
+            img = Image.new('RGB', size, (230, 240, 250))
+            draw = ImageDraw.Draw(img)
+            
+            # Draw simple grid
+            for i in range(0, size[0], size[0]//10):
+                draw.line([(i, 0), (i, size[1])], fill=(200, 200, 200), width=1)
+            for i in range(0, size[1], size[1]//10):
+                draw.line([(0, i), (size[0], i)], fill=(200, 200, 200), width=1)
+            
+            # Draw pin
+            center = (size[0]//2, size[1]//2)
+            radius = 8
+            draw.ellipse([
+                (center[0]-radius, center[1]-radius),
+                (center[0]+radius, center[1]+radius)
+            ], fill=(255, 0, 0))
+            
+            # Add text
+            try:
+                font = ImageFont.load_default()
+                draw.text((10, 10), "Placeholder Map", fill=(0, 0, 0), font=font)
+                draw.text((10, size[1]-20), f"Lat: {latitude:.6f}, Lon: {longitude:.6f}", fill=(0, 0, 0), font=font)
+            except:
+                pass
+            
+            # Save
+            temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            temp_img.close()
+            img.save(temp_img.name)
+            return temp_img.name
+            
+        except:
+            # If all else fails, return None
+            return None
+
+def generate_map(latitude, longitude, zoom=15, size=(300, 300)):
+    """
+    Generate a map image with a pin at the specified coordinates using OpenStreetMap data via Overpass API.
+    Falls back to a placeholder map if API request fails.
+    
+    Args:
+        latitude (float): Latitude coordinate
+        longitude (float): Longitude coordinate
+        zoom (int): Zoom level for the map (default: 15)
+        size (tuple): Size of the output image (width, height)
+        
+    Returns:
+        str: Path to the generated map image (temporary file)
+    """
+    try:
+        print(f"Generating map for coordinates: Lat {latitude}, Lon {longitude}")
+        
+        # Validate coordinates
+        if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+            print(f"Invalid coordinates: Lat {latitude}, Lon {longitude}")
+            return generate_placeholder_map(0, 0, zoom, size)  # Use default coordinates for placeholder
+        
+        # Calculate radius based on zoom level (higher zoom = smaller radius)
+        base_radius = 500  # Moderate radius to get sufficient context
+        radius = int(base_radius / (zoom / 10))
+        
+        # Get map data from Overpass API
+        map_data = get_map_data_from_overpass(latitude, longitude, radius)
+        
+        # Check if we got meaningful data
+        if map_data and 'elements' in map_data and len(map_data.get('elements', [])) > 3:
+            print(f"Rendering map with {len(map_data.get('elements', []))} elements")
+            
+            # Render the map
+            map_img = render_map_from_overpass_data(map_data, latitude, longitude, size, zoom/10.0)
+            
+            if map_img:
+                # Save to temporary file
+                temp_img = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+                temp_img.close()
+                map_img.save(temp_img.name)
+                
+                print(f"Successfully generated map: {temp_img.name}")
+                return temp_img.name
+        else:
+            print("Insufficient map data received from Overpass API")
+        
+        # If we get here, either the API request failed or rendering failed
+        print("Falling back to placeholder map")
+        return generate_placeholder_map(latitude, longitude, zoom, size)
+        
+    except Exception as e:
+        print(f"Error generating map: {str(e)}")
+        print("Falling back to placeholder map due to error")
+        return generate_placeholder_map(latitude, longitude, zoom, size)
 
 def generate_compass_indicator(orientation, size=(100, 100)):
     """
