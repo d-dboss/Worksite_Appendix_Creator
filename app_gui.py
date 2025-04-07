@@ -47,11 +47,11 @@ class PhotoAppendixApp:
         images_per_page_combo.state(['readonly'])
         images_per_page_combo.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
         
-        # Add include location option
+        # Add include location info option
         self.include_location = tk.BooleanVar(value=True)
         location_check = ttk.Checkbutton(
             options_frame, 
-            text="Include location data (maps and compass)", 
+            text="Include location data and compass direction", 
             variable=self.include_location
         )
         location_check.grid(row=1, column=0, columnspan=2, padx=5, pady=5, sticky=tk.W)
