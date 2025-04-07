@@ -1,0 +1,289 @@
+# Technical Specification: iPhone Photo-to-Document Appendix Generator
+
+## 1. Project Overview
+
+This specification details a cross-platform desktop application (Mac & PC compatible) that processes iPhone photos and creates document appendices. The application will extract metadata from photos (captions, geolocation, and orientation) and generate a Word-compatible document with formatted images and their relevant metadata.
+
+## 2. Requirements
+
+### 2.1 Functional Requirements
+
+#### Priority 1 (Must Have)
+- Import photos from a local folder
+- Extract image descriptions from photo metadata
+- Generate a Word-compatible document (.docx)
+- Place 2 images per page by default
+- Display each image's caption (from metadata) directly below the image
+
+#### Priority 2 (Should Have)
+- Extract geolocation data from photo metadata
+- Generate a small map with a pin showing photo location
+- Extract and display compass direction data (orientation metadata)
+- Create a small graphic showing the relative direction to north
+
+#### Bonus Features (Nice to Have)
+- Allow user to customize number of images per page
+- Toggle inclusion of location data in captions
+- Customize output document format and layout
+
+### 2.2 Non-Functional Requirements
+- Cross-platform compatibility (Mac OS and Windows)
+- Simple, intuitive GUI
+- Minimal setup requirements
+- Reasonable performance with batches of up to 100 photos
+- Error handling for missing metadata
+
+## 3. System Architecture
+
+The application will follow a simple MVC (Model-View-Controller) pattern:
+
+- **Model**: Handles photo data, metadata extraction, and document generation
+- **View**: User interface components
+- **Controller**: Orchestrates user actions, data flow, and application logic
+
+## 4. Technical Stack
+
+### 4.1 Programming Language
+- Python 3.8+ (for cross-platform compatibility)
+
+### 4.2 Key Libraries
+- **GUI**: `tkinter` (built-in, cross-platform)
+- **Image Processing**: `Pillow` (PIL Fork)
+- **Metadata Extraction**: `exifread` or `Pillow`
+- **Document Generation**: `python-docx`
+- **Geolocation/Maps**: `folium` (for map generation) or `staticmap`
+- **Additional Utilities**: `os`, `shutil`, `tempfile`
+
+## 5. Implementation Details
+
+### 5.1 GUI Components
+
+Create a simple window with:
+- Title bar: "Photo Appendix Generator"
+- Input section:
+  - Button to select photos (will open file dialog)
+  - Display of selected photo count and paths
+- Options section:
+  - Dropdown for images per page (default: 2, options: 1-4)
+  - Checkbox for "Include location data in captions"
+- Output section:
+  - Button to select output location
+  - Button to generate document
+- Status section:
+  - Progress bar
+  - Status messages
+
+### 5.2 Photo Processing Module
+
+1. **Photo Selection**
+   - Use `tkinter.filedialog.askopenfilenames()` to allow multiple file selection
+   - Filter for image formats (.jpg, .jpeg, .heic, .png)
+   - Store file paths in application state
+
+2. **Metadata Extraction**
+   - Use `exifread` to extract EXIF metadata
+   - Target fields:
+     - Image Description/UserComment for captions
+     - GPS data (latitude, longitude)
+     - Orientation data (compass direction)
+   - Handle missing metadata gracefully
+
+3. **Map Generation**
+   - Use `folium` to create small map thumbnails for each photo with GPS data
+   - Center map on photo location
+   - Add a pin marker at exact coordinates
+   - Export map as PNG image
+   - Generate simple compass direction indicator using `PIL.ImageDraw`
+
+### 5.3 Document Generation Module
+
+1. **Document Creation**
+   - Use `python-docx` to create new Word document
+   - Set document properties (title, author, etc.)
+   - Configure page layout (margins, orientation)
+
+2. **Image Insertion**
+   - Calculate appropriate image size based on page dimensions and images-per-page setting
+   - Insert each image with proper scaling
+   - Add caption text below each image
+   - Add map thumbnail and compass indicator if enabled
+   - Format text with appropriate styles
+
+3. **Document Saving**
+   - Use `tkinter.filedialog.asksaveasfilename()` for output location
+   - Default file extension to .docx
+   - Save document using `python-docx`
+
+## 6. Coding Implementation Guide
+
+### 6.1 Project Structure
+```
+photo_appendix_generator/
+├── main.py           # Application entry point
+├── app_gui.py        # GUI implementation
+├── photo_processor.py # Photo and metadata handling
+├── document_generator.py # Document creation
+├── map_generator.py  # Map and direction indicator generation
+└── utils.py          # Utility functions
+```
+
+### 6.2 Implementation Steps
+
+1. **Set up basic application**
+   - Create main window using `tkinter`
+   - Implement file selection dialog
+   - Add basic layout and controls
+
+2. **Implement photo metadata extraction**
+   - Create functions to read EXIF data
+   - Extract captions, GPS coordinates, and orientation
+   - Handle error cases (missing data)
+
+3. **Implement map generation**
+   - Create functions to generate maps from coordinates
+   - Generate direction indicators
+   - Save as temporary images
+
+4. **Implement document generation**
+   - Create document with proper layout
+   - Calculate image positions based on images-per-page setting
+   - Insert images, captions, maps, and direction indicators
+   - Format content appropriately
+
+5. **Connect GUI to processing logic**
+   - Bind button actions to processing functions
+   - Implement progress updates
+   - Add error handling and user feedback
+
+6. **Implement settings and options**
+   - Add controls for images-per-page
+   - Add toggle for location data inclusion
+   - Save user preferences between sessions (optional)
+
+### 6.3 Key Functions (Pseudocode)
+
+```python
+# Photo selection
+def select_photos():
+    file_paths = tkinter.filedialog.askopenfilenames(
+        title="Select Photos",
+        filetypes=[("Image files", "*.jpg *.jpeg *.png *.heic")]
+    )
+    return list(file_paths)
+
+# Metadata extraction
+def extract_metadata(photo_path):
+    with open(photo_path, 'rb') as f:
+        tags = exifread.process_file(f)
+    
+    caption = tags.get('Image Description', None)
+    gps_lat = tags.get('GPS GPSLatitude', None)
+    gps_long = tags.get('GPS GPSLongitude', None)
+    orientation = tags.get('GPS GPSImgDirection', None)
+    
+    return {
+        'caption': caption,
+        'gps': (gps_lat, gps_long) if gps_lat and gps_long else None,
+        'orientation': orientation
+    }
+
+# Map generation
+def generate_map(latitude, longitude, size=(200, 200)):
+    m = folium.Map(location=[latitude, longitude], zoom_start=15)
+    folium.Marker([latitude, longitude]).add_to(m)
+    
+    # Save to temp file
+    temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    m.save(temp_file.name)
+    
+    # Convert to appropriate size
+    img = Image.open(temp_file.name)
+    img = img.resize(size)
+    return img
+
+# Document creation
+def create_document(photos, output_path, images_per_page=2, include_location=True):
+    doc = Document()
+    
+    # Set page layout
+    section = doc.sections[0]
+    section.page_height = Inches(11)
+    section.page_width = Inches(8.5)
+    section.left_margin = Inches(1)
+    section.right_margin = Inches(1)
+    section.top_margin = Inches(1)
+    section.bottom_margin = Inches(1)
+    
+    # Calculate image sizes
+    img_width = Inches((8.5 - 2) / (images_per_page / 2))
+    
+    # Process photos
+    for i, photo_path in enumerate(photos):
+        # Start new page if needed
+        if i % images_per_page == 0 and i > 0:
+            doc.add_page_break()
+        
+        # Add photo
+        metadata = extract_metadata(photo_path)
+        img = Image.open(photo_path)
+        
+        # Add image to document
+        doc.add_picture(photo_path, width=img_width)
+        
+        # Add caption
+        if metadata['caption']:
+            doc.add_paragraph(metadata['caption'])
+        
+        # Add map if available and requested
+        if include_location and metadata['gps']:
+            map_img = generate_map(metadata['gps'][0], metadata['gps'][1])
+            doc.add_picture(map_img, width=Inches(1))
+    
+    # Save document
+    doc.save(output_path)
+```
+
+## 7. Error Handling
+
+Implement error handling for:
+- Missing or corrupted files
+- Lack of required metadata
+- Insufficient disk space
+- Permission issues
+- Map generation failures
+- Document creation errors
+
+Display user-friendly error messages and provide fallback options where possible.
+
+## 8. Testing Guidelines
+
+Test the application with:
+- Photos with complete metadata
+- Photos with partial metadata
+- Photos with no metadata
+- Different page configurations
+- Various output locations
+- Large batches of photos
+
+## 9. Performance Considerations
+
+- Process photos in batches if dealing with large numbers
+- Use temporary files for intermediate steps
+- Consider multithreading for UI responsiveness during processing
+- Optimize image resizing for document insertion
+
+## 10. Deliverables
+
+The final application should include:
+- Executable application for Windows and macOS
+- Source code
+- Basic user documentation
+
+## 11. Development Approach
+
+1. Start with a minimal viable product (Priority 1 features)
+2. Add Priority 2 features once core functionality is working
+3. Implement bonus features last
+4. Test thoroughly on both platforms
+5. Optimize performance
+6. Package for distribution
