@@ -279,7 +279,7 @@ def generate_compass_indicator(orientation, size=(100, 100)):
         except AttributeError:
              text_width, _ = draw.textsize(orientation_text, font=font_text) # Fallback
 
-        text_y_pos = center_y + radius + 5 # Position text below the circle
+        text_y_pos = center_y + radius + 9 # Position text below the circle
         draw.text((center_x - text_width//2, text_y_pos),
                   orientation_text, fill=(0, 0, 0), font=font_text)
 
