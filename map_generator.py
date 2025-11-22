@@ -25,7 +25,7 @@ except ImportError:
 # Keep track of temporary files created *by this module* in a single run
 _temp_files_this_run = []
 
-def find_font(preferred_fonts=["Arial", "DejaVuSans", "Helvetica"], size=10):
+def find_font(preferred_fonts=["Veranda", "Arial", "DejaVuSans", "Helvetica"], size=10):
      """Tries to find a suitable TTF font."""
      font_paths = [
          '/usr/share/fonts/truetype/dejavu/', # Linux DejaVu
