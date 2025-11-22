@@ -272,16 +272,48 @@ def generate_compass_indicator(orientation, size=(100, 100)):
         # --- Add Orientation Text ---
         font_text = DEFAULT_FONT_NORMAL
         orientation_text = f"{orientation:.0f}°" # Show whole degrees
-         # Calculate text position below the compass
+        
+        # Calculate text position inside the circle near the tail of the arrow
+        # We'll position it slightly behind the center point, opposite to the arrow's direction
+        text_offset_distance = 15 # Distance from the center to position the text
+        text_angle_rad = orientation_rad + math.pi # Opposite direction of the arrow
+
+        text_x_pos = center_x + text_offset_distance * math.sin(text_angle_rad)
+        text_y_pos = center_y - text_offset_distance * math.cos(text_angle_rad)
+
+
+         # Calculate text width and height for centering
         try:
              bbox = draw.textbbox((0, 0), orientation_text, font=font_text)
              text_width = bbox[2] - bbox[0]
+             text_height = bbox[3] - bbox[1]
         except AttributeError:
-             text_width, _ = draw.textsize(orientation_text, font=font_text) # Fallback
+            # Fallback for older Pillow versions
+            try:
+                text_width, _ = draw.textsize(orientation_text, font=font_text)
+            except AttributeError:
+                 # If both textbbox and textsize are missing, estimate size
+                 text_width = len(orientation_text) * (font_text.size // 2) # Crude estimate
+                 print(f"Warning: Neither textbbox nor textsize found. Estimating text size for '{orientation_text}'.")
 
-        text_y_pos = center_y + radius + 9 # Position text below the circle
-        draw.text((center_x - text_width//2, text_y_pos),
+        # Adjust position to center the text
+        final_text_x = text_x_pos - text_width/2
+        final_text_y = text_y_pos - text_height/2
+
+
+        draw.text((final_text_x, final_text_y),
                   orientation_text, fill=(0, 0, 0), font=font_text)
+        # below commented out section is the previous version position of the text
+        # Calculate text position below the compass
+        #try:
+        #     bbox = draw.textbbox((0, 0), orientation_text, font=font_text)
+        #     text_width = bbox[2] - bbox[0]
+        #except AttributeError:
+        #     text_width, _ = draw.textsize(orientation_text, font=font_text) # Fallback
+
+        #text_y_pos = center_y + radius + 9 # Position text below the circle
+        #draw.text((center_x - text_width//2, text_y_pos),
+        #          orientation_text, fill=(0, 0, 0), font=font_text)
 
 
         # --- Save to Temporary File ---
